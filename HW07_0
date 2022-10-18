@@ -1,1 +1,89 @@
- 
+from airflow import DAG
+from datetime import datetime
+from airflow.operators.python_operator import PythonOperator
+import os
+import requests
+
+BASE_DIR = "/home/tt"
+
+RAW_DIR = os.path.join(BASE_DIR, "raw", "sales", "{{ ds }}")
+print(RAW_DIR)
+
+STG_DIR = os.path.join(BASE_DIR, "stg", "sales", "{{ ds }}")
+print(STG_DIR)
+
+JOB1_PORT = 8081
+JOB2_PORT = 8082
+
+def run_job_1(**kwargs):
+    raw_dir = kwargs['raw_dir']
+    port = kwargs['port']
+    run_date = kwargs['run_date']
+    print("Starting job1:")
+    resp = requests.post(
+        url=f'http://localhost:{port}/',
+        json={
+            "date": run_date,
+            "raw_dir": raw_dir
+        }
+    )
+    if resp.status_code == 201:
+        print("Stop job1:")
+        return True
+    else:
+        print("Error job1:")
+        return False
+
+
+def run_job_2(**kwargs):
+    raw_dir = kwargs['raw_dir']
+    port = kwargs['port']
+    stg_dir = kwargs['stg_dir']
+    print("Starting job2:")
+    resp = requests.post(
+        url=f'http://localhost:{port}/',
+        json={
+            "raw_dir": raw_dir,
+            "stg_dir": stg_dir
+        }
+    )
+    if resp.status_code == 201:
+        print("Stop job2:")
+        return True
+    else:
+        print("Error job2:")
+        return False
+
+
+dag = DAG(
+    dag_id="process_sales",
+    start_date=datetime(2022, 8, 9),
+    end_date=datetime(2022, 8, 12),
+    schedule_interval="0 1 * * *",
+    catchup=True,
+    max_active_runs=1
+)
+
+extract_data_from_api = PythonOperator(
+    task_id='extract_data_from_api',
+    dag=dag,
+    python_callable=run_job_1,
+    op_kwargs={
+        "raw_dir": RAW_DIR,
+        "port": JOB1_PORT,
+        "run_date": "{{ ds }}"
+    }
+)
+
+convert_to_avro = PythonOperator(
+    task_id='convert_to_avro',
+    dag=dag,
+    python_callable=run_job_2,
+    op_kwargs={
+        "raw_dir": RAW_DIR,
+        "port": JOB2_PORT,
+        "stg_dir": STG_DIR
+    }
+)
+
+extract_data_from_api >> convert_to_avro 
